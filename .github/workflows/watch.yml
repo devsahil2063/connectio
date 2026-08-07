@@ -5,6 +5,11 @@ name: watch
 # the chain if a link in it ever breaks.
 on:
   workflow_dispatch:
+    inputs:
+      runtime_seconds:
+        description: "How long this run polls before handing off. Lower it for a test run."
+        required: false
+        default: "20700"
   schedule:
     - cron: "0 */6 * * *"
 
@@ -26,7 +31,8 @@ jobs:
       STORAGE_STATE_B64: ${{ secrets.STORAGE_STATE_B64 }}
       STORAGE_STATE_PATH: state/storage_state.json
       STATE_DIR: state
-      MAX_RUNTIME_SECONDS: "20700" # 5h45m, leaves room for handoff
+      # 5h45m default, leaves room for handoff under the 6h cap.
+      MAX_RUNTIME_SECONDS: ${{ inputs.runtime_seconds || '20700' }}
       POLL_SECONDS: "60"
       HEALTH: "0"
       QUERY: claude referral
@@ -59,10 +65,12 @@ jobs:
         run: python bot.py
 
       # Runs even if the watcher crashed, so a failure still restarts the chain.
+      # Deliberately NOT on cancel: cancelling is the kill switch, and if a
+      # cancelled run still handed off there would be no way to stop the bot.
       # GITHUB_TOKEN cannot do this: workflows dispatched with it do not start a
       # new run. Hence CHAIN_TOKEN, a PAT with Actions:write.
       - name: Hand off to next run
-        if: always()
+        if: success() || failure()
         env:
           GH_TOKEN: ${{ secrets.CHAIN_TOKEN }}
         run: gh workflow run watch.yml --repo "$GITHUB_REPOSITORY"
