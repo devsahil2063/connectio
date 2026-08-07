@@ -195,6 +195,9 @@ async def poll(page, seen: list[str]) -> int:
         return 0
 
     items = (await page.evaluate(EXTRACT_JS))[:RESULT_COUNT]
+    # Unattended, this line is the only proof the scrape is still working.
+    newest = max((i.get("created") or "" for i in items), default="?")
+    log(f"cycle: {len(items)} results, newest {newest}")
 
     for item in items:
         created = item.get("created")
