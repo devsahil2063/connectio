@@ -4,3 +4,5 @@ seen.json
 accounts.db
 .venv/
 __pycache__/
+debug*.png
+__pycache__/

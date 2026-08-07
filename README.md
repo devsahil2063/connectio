@@ -34,20 +34,27 @@ playwright install chromium
 cp .env.example .env      # then fill it in
 ```
 
-## 3. Log in once — on YOUR PC, not in CI
+## 3. Get a session — copy cookies from your own browser
 
 ```bash
-python login.py
+python make_session.py
 ```
 
-A Chromium window opens and logs in with the burner account. Clear any captcha,
-email code, or 2FA **by hand**; it waits up to 10 minutes for the timeline. It writes
-`storage_state.json` and prints a base64 blob — keep that blob.
+**X refuses to log in from an automated browser**, whatever the account — it checks
+`navigator.webdriver` and the AutomationControlled flag, and the login page is its
+most guarded surface. So we never log in with Playwright. Instead:
 
-Do this locally on purpose: your home IP is trusted far more than a CI runner's, so
-the login clears here and would likely be challenged there. CI never logs in — it
-only reuses this session, and writes the refreshed session back to the Actions cache
-each run.
+1. Log into x.com in normal Chrome
+2. **F12 → Application → Cookies → `https://x.com`**
+3. Copy the values of `auth_token` and `ct0` into `.env` as `X_AUTH_TOKEN` / `X_CT0`
+4. `python make_session.py` writes `storage_state.json` and prints a base64 blob
+
+Those two cookies are full account access — treat them as a password. Logging out of
+X in Chrome invalidates them, which doubles as the kill switch.
+
+Browsing with an existing session is accepted where scripted login is not.
+`bot.py` also hides the automation markers, and writes the refreshed session back to
+the Actions cache each run, since X rotates cookies as you browse.
 
 ## 4. Test it locally
 
@@ -74,7 +81,7 @@ the code is visible, and there is nothing sensitive in it.
    | Secret | Value |
    |---|---|
    | `SLACK_WEBHOOK_URL` | webhook from step 1 |
-   | `STORAGE_STATE_B64` | base64 blob from step 3 |
+   | `STORAGE_STATE_B64` | base64 blob from `make_session.py` |
    | `CHAIN_TOKEN` | the PAT from step 2 |
 
 4. **Actions** tab → **watch** workflow → **Run workflow**.
@@ -102,7 +109,10 @@ Set these as `env:` in the workflow, or in `.env` locally.
 
 - `QUERY` — search term, default `claude referral`. One page load per cycle.
 - `RESULT_COUNT` — results read per cycle, default 25.
-- `MAX_AGE_MINUTES` — ignore posts older than this, so a restart doesn't replay dead links.
+- `MAX_AGE_MINUTES` — ignore posts older than this, default 360. Live search for this
+  term is **sparse** — observed results were hours apart, not minutes — so a tight
+  window silently drops everything. Dedupe is what prevents repeats; this only bounds
+  the initial backfill.
 - `POLL_SECONDS` — cycle interval, default 60.
 - `MAX_RUNTIME_SECONDS` — exit for handoff. 0 disables. CI sets 20700.
 - `HEALTH` — set `0` to skip the health port. CI sets 0.
@@ -116,9 +126,9 @@ kept in `seen.json`.
 - **CI runner IP gets challenged.** The real risk of this design: the session was
   born on your home IP and is used from a datacenter. If X objects, the log says
   `session expired` and the job exits 1. No way to know without trying.
-- **Session expires** → rerun `login.py`, update `STORAGE_STATE_B64`, re-run workflow.
+- **Session expires** → recopy the cookies, rerun `make_session.py`, update `STORAGE_STATE_B64`, re-run workflow.
 - **X reskins the DOM** → `no results rendered`. Fix `EXTRACT_JS` in [bot.py](bot.py).
-- **Burner suspended** → new account, rerun `login.py`.
+- **Account suspended** → use another account, recopy cookies.
 - **Heavy Actions use** is more than GitHub optimizes for. It's your own repo's app,
   not a ToS violation, but they can throttle.
 - Latency is ~1 min plus X's own search indexing lag.

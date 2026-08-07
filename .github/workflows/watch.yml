@@ -30,6 +30,7 @@ jobs:
       POLL_SECONDS: "60"
       HEALTH: "0"
       QUERY: claude referral
+      MAX_AGE_MINUTES: "360"
 
     steps:
       - uses: actions/checkout@v4

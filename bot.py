@@ -26,6 +26,9 @@ import httpx
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
+# Tweet text is full of emoji; a cp1252 console would crash the process on log().
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 load_dotenv()
 
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
@@ -36,7 +39,9 @@ STORAGE_STATE_PATH = Path(os.getenv("STORAGE_STATE_PATH", "storage_state.json"))
 
 QUERY = os.getenv("QUERY", "claude referral")
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
-MAX_AGE_MINUTES = int(os.getenv("MAX_AGE_MINUTES", "30"))
+# Live search for this term is sparse - results are often hours apart, so a tight
+# window drops everything. Dedupe by link is what actually prevents repeats.
+MAX_AGE_MINUTES = int(os.getenv("MAX_AGE_MINUTES", "360"))
 RESULT_COUNT = int(os.getenv("RESULT_COUNT", "25"))
 PORT = int(os.getenv("PORT", "7860"))
 HEADLESS = os.getenv("HEADLESS", "1") != "0"
@@ -67,6 +72,10 @@ EXTRACT_JS = """
     created: timeEl ? timeEl.getAttribute('datetime') : null,
     permalink: statusLink ? statusLink.href : null,
     hrefs: Array.from(a.querySelectorAll('a[href]')).map(x => x.href),
+    // X renders a URL as several spans, so innerText comes back with spaces
+    // injected mid-URL. textContent with whitespace stripped rebuilds it.
+    linkTexts: Array.from(a.querySelectorAll('a[href]'))
+      .map(x => (x.textContent || '').replace(/\\s+/g, '')),
     cards: Array.from(a.querySelectorAll('[data-testid="card.wrapper"] a[href]')).map(x => x.href)
   };
 })
@@ -132,7 +141,7 @@ async def extract_links(item: dict) -> list[str]:
     """Referral links from tweet text, card links, and resolved t.co redirects."""
     blob = item.get("text") or ""
     direct = [h for h in item.get("hrefs", []) + item.get("cards", []) if "claude." in h]
-    blob += " " + " ".join(direct)
+    blob += " " + " ".join(direct) + " " + " ".join(item.get("linkTexts", []))
 
     found = LINK_RE.findall(blob)
     if not found:
