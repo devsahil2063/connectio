@@ -242,13 +242,24 @@ async def run_watcher() -> None:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=HEADLESS,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                # Without this Chromium advertises itself as automated, which X
+                # checks for. It is why the scripted login gets refused.
+                "--disable-blink-features=AutomationControlled",
+            ],
         )
         ctx = await browser.new_context(
             storage_state=str(STORAGE_STATE_PATH),
             user_agent=USER_AGENT,
             viewport={"width": 1280, "height": 900},
             locale="en-US",
+            timezone_id=os.getenv("TZ_ID", "Asia/Kolkata"),
+        )
+        # navigator.webdriver is true under automation; page JS can read it.
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = await ctx.new_page()
         launched = time.monotonic()
