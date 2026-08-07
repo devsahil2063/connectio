@@ -1,0 +1,67 @@
+name: watch
+
+# Chained long-running jobs: each run polls for ~5h45m, then dispatches the next
+# one before GitHub's hard 6h job cap. The cron is only a safety net that restarts
+# the chain if a link in it ever breaks.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+concurrency:
+  group: watcher
+  # Must be false: the handoff dispatch happens while this job is still running,
+  # and cancelling here would kill the post-step that saves state to the cache.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355 # 5h55m, under the 6h hard cap
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      STORAGE_STATE_B64: ${{ secrets.STORAGE_STATE_B64 }}
+      STORAGE_STATE_PATH: state/storage_state.json
+      STATE_DIR: state
+      MAX_RUNTIME_SECONDS: "20700" # 5h45m, leaves room for handoff
+      POLL_SECONDS: "60"
+      HEALTH: "0"
+      QUERY: claude referral
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Carries the live session and seen-links list from the previous run.
+      # The run_id key means every run writes a fresh entry; restore-keys picks
+      # up the most recent one.
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: state
+          key: watcher-state-${{ github.run_id }}
+          restore-keys: watcher-state-
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Watch
+        run: python bot.py
+
+      # Runs even if the watcher crashed, so a failure still restarts the chain.
+      # GITHUB_TOKEN cannot do this: workflows dispatched with it do not start a
+      # new run. Hence CHAIN_TOKEN, a PAT with Actions:write.
+      - name: Hand off to next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CHAIN_TOKEN }}
+        run: gh workflow run watch.yml --repo "$GITHUB_REPOSITORY"

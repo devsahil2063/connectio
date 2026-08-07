@@ -1,0 +1,6 @@
+.env
+storage_state.json
+seen.json
+accounts.db
+.venv/
+__pycache__/
