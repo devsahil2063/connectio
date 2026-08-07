@@ -103,6 +103,34 @@ events can be delayed or dropped, which is exactly wrong for links that expire.
 Session and seen-links state ride between runs in `actions/cache`, keyed by run ID so
 every run writes a fresh entry and `restore-keys` picks up the newest.
 
+## Operating it
+
+**Stop the bot.** Cancel the running job — Actions tab → the in-progress run →
+**Cancel workflow**, or `gh run cancel <id>`. The handoff deliberately does not fire
+on cancel, so the chain stops. Nothing restarts it until the 6h safety cron.
+
+**Start it again.** Actions → **watch** → **Run workflow**.
+
+**Test without waiting 6 hours.** Run workflow with `runtime_seconds` set to e.g.
+`240`. CI logs for a step are only readable once that step ends, so a short run is
+the only way to see output.
+
+**Rotate the session** when the log shows `session expired`:
+
+```bash
+# Chrome, logged into x.com: F12 -> Application -> Cookies -> https://x.com
+# copy auth_token and ct0 into .env, then:
+python make_session.py
+python -c "import base64,sys; sys.stdout.write(base64.b64encode(open('storage_state.json','rb').read()).decode())" | gh secret set STORAGE_STATE_B64 --repo <owner>/<repo>
+gh workflow run watch.yml --repo <owner>/<repo>
+```
+
+Or paste the blob into **Settings → Secrets and variables → Actions →
+`STORAGE_STATE_B64` → Update**, then re-run the workflow.
+
+**Check it's alive.** Each cycle logs `cycle: N results, newest <timestamp>`. If that
+line stops or N drops to 0, the scrape is broken.
+
 ## Tuning
 
 Set these as `env:` in the workflow, or in `.env` locally.
