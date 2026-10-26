@@ -128,6 +128,11 @@ gh workflow run watch.yml --repo <owner>/<repo>
 Or paste the blob into **Settings → Secrets and variables → Actions →
 `STORAGE_STATE_B64` → Update**, then re-run the workflow.
 
+**If it stopped entirely.** GitHub disables scheduled workflows in public repos after
+60 days without a commit (state `disabled_inactivity`). Each handoff now re-enables the
+workflow to reset that timer. If it does get disabled anyway, go to Actions → **watch** →
+**Enable workflow**, then **Run workflow**.
+
 **Check it's alive.** Each cycle logs `cycle: N results, newest <timestamp>`. If that
 line stops or N drops to 0, the scrape is broken.
 
@@ -155,6 +160,8 @@ kept in `seen.json`.
   born on your home IP and is used from a datacenter. If X objects, the log says
   `session expired` and the job exits 1. No way to know without trying.
 - **Session expires** → recopy the cookies, rerun `make_session.py`, update `STORAGE_STATE_B64`, re-run workflow.
+- **Empty for 30 cycles in a row** → Slack gets a warning and a screenshot is uploaded
+  as a run artifact. Usually means the session is dead (refresh `STORAGE_STATE_B64`).
 - **X reskins the DOM** → `no results rendered`. Fix `EXTRACT_JS` in [bot.py](bot.py).
 - **Account suspended** → use another account, recopy cookies.
 - **Heavy Actions use** is more than GitHub optimizes for. It's your own repo's app,

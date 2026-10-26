@@ -43,6 +43,8 @@ POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 # window drops everything. Dedupe by link is what actually prevents repeats.
 MAX_AGE_MINUTES = int(os.getenv("MAX_AGE_MINUTES", "360"))
 RESULT_COUNT = int(os.getenv("RESULT_COUNT", "25"))
+# This many empty cycles in a row means the scrape is broken, not that X is quiet.
+EMPTY_ALERT_CYCLES = int(os.getenv("EMPTY_ALERT_CYCLES", "30"))
 PORT = int(os.getenv("PORT", "7860"))
 HEADLESS = os.getenv("HEADLESS", "1") != "0"
 RUN_ONCE = os.getenv("RUN_ONCE") == "1"
@@ -151,6 +153,13 @@ async def extract_links(item: dict) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def alert_slack(text: str) -> None:
+    try:
+        httpx.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=15).raise_for_status()
+    except Exception as e:
+        log(f"slack alert failed: {type(e).__name__}: {e}")
+
+
 def post_to_slack(item: dict, links: list[str]) -> None:
     permalink = item.get("permalink") or "https://x.com/search"
     handle = "unknown"
@@ -189,10 +198,15 @@ async def poll(page, seen: list[str]) -> int:
         await page.wait_for_selector('article[data-testid="tweet"]', timeout=20000)
     except Exception:
         # Genuinely-empty results and a session/challenge wall look the same here.
-        if await page.query_selector('[data-testid="loginButton"]'):
-            raise RuntimeError("session expired - rerun login.py and update the session")
-        log("no results rendered this cycle")
-        return 0
+        if "/login" in page.url or "/logout" in page.url or await page.query_selector(
+            '[data-testid="loginButton"], [data-testid="login"], a[href="/login"]'
+        ):
+            raise RuntimeError("session expired - rerun make_session.py and update STORAGE_STATE_B64")
+        # Say what the page actually shows, so a wall is distinguishable from quiet.
+        title = await page.title()
+        body = await page.evaluate("() => (document.body ? document.body.innerText : '')")
+        log(f"no results rendered this cycle | url={page.url} | title={title!r} | page={' '.join(body.split())[:200]!r}")
+        return -1
 
     items = (await page.evaluate(EXTRACT_JS))[:RESULT_COUNT]
     # Unattended, this line is the only proof the scrape is still working.
@@ -287,12 +301,23 @@ async def run_watcher() -> None:
             if code is not None:
                 sys.exit(code)
 
+        empty_streak = 0
         while True:
             started = time.monotonic()
             try:
-                await poll(page, seen)
+                result = await poll(page, seen)
+                empty_streak = empty_streak + 1 if result < 0 else 0
+                if empty_streak == EMPTY_ALERT_CYCLES:
+                    STATE_DIR.mkdir(parents=True, exist_ok=True)
+                    await page.screenshot(path=str(STATE_DIR / "empty.png"))
+                    alert_slack(
+                        f":warning: connectio: X search showed no tweets for {empty_streak} "
+                        "cycles in a row. The session is probably dead - refresh "
+                        "STORAGE_STATE_B64. Screenshot is in the run's artifacts."
+                    )
             except RuntimeError as e:
                 log(f"FATAL: {e}")
+                alert_slack(f":rotating_light: connectio stopped: {e}")
                 await shutdown(1)
             except Exception as e:
                 log(f"poll cycle error: {type(e).__name__}: {e}")
