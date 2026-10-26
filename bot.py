@@ -14,6 +14,7 @@ the container as alive and an uptime pinger can keep it awake.
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -103,10 +104,18 @@ def save_seen(seen: list[str]) -> None:
 
 
 def ensure_storage_state() -> None:
-    """Hosts with ephemeral disks supply the session as a base64 env var."""
+    """Hosts with ephemeral disks supply the session as a base64 env var.
+
+    A cached session file wins (it carries X's rotated cookies), unless the
+    secret changed since it was written - that means the user rotated it.
+    """
+    blob = os.getenv("STORAGE_STATE_B64", "").strip()
+    marker = STORAGE_STATE_PATH.with_suffix(".secret-hash")
+    blob_hash = hashlib.sha256(blob.encode()).hexdigest()
     if STORAGE_STATE_PATH.exists():
-        return
-    blob = os.getenv("STORAGE_STATE_B64")
+        if not blob or (marker.exists() and marker.read_text() == blob_hash):
+            return
+        log("STORAGE_STATE_B64 changed, replacing the cached session")
     if not blob:
         sys.exit(
             f"No {STORAGE_STATE_PATH} and no STORAGE_STATE_B64 set.\n"
@@ -114,6 +123,7 @@ def ensure_storage_state() -> None:
         )
     STORAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STORAGE_STATE_PATH.write_bytes(base64.b64decode(blob))
+    marker.write_text(blob_hash)
     log(f"restored session from STORAGE_STATE_B64 -> {STORAGE_STATE_PATH}")
 
 
