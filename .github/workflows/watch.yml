@@ -64,6 +64,16 @@ jobs:
       - name: Watch
         run: python bot.py
 
+      # What the browser saw when the scrape came back empty, for debugging.
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ github.run_id }}
+          path: state/empty.png
+          if-no-files-found: ignore
+          retention-days: 7
+
       # Runs even if the watcher crashed, so a failure still restarts the chain.
       # Deliberately NOT on cancel: cancelling is the kill switch, and if a
       # cancelled run still handed off there would be no way to stop the bot.
@@ -73,4 +83,8 @@ jobs:
         if: success() || failure()
         env:
           GH_TOKEN: ${{ secrets.CHAIN_TOKEN }}
-        run: gh workflow run watch.yml --repo "$GITHUB_REPOSITORY"
+        # GitHub disables scheduled workflows after 60 days without a commit, which
+        # silently killed the chain once. Re-enabling via the API resets that timer.
+        run: |
+          gh workflow enable watch.yml --repo "$GITHUB_REPOSITORY"
+          gh workflow run watch.yml --repo "$GITHUB_REPOSITORY"
